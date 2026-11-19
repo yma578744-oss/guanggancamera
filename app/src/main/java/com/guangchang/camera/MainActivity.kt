@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
     private var reviewOriginalBitmap: Bitmap? = null
     private var reviewProcessedBitmap: Bitmap? = null
     private var reviewShowingOriginal = false
+    private var reviewSavedUri: Uri? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -333,8 +334,10 @@ class MainActivity : ComponentActivity() {
                         runOnUiThread {
                             processing = false
                             captureButton.alpha = 1f
-                            showReview(originalForReview, processed)
+                            reviewSavedUri = uri
+                            showReview(originalForReview, processed, uri)
                             if (uri != null) Toast.makeText(this@MainActivity, "电影感成片已保存到相册", Toast.LENGTH_LONG).show()
+                            else Toast.makeText(this@MainActivity, "自动保存失败，请在成片页点击“保存成片”重试", Toast.LENGTH_LONG).show()
                         }
                     } catch (e: Exception) {
                         runOnUiThread {
@@ -352,12 +355,13 @@ class MainActivity : ComponentActivity() {
     }
 
 
-    private fun showReview(original: Bitmap, processed: Bitmap) {
+    private fun showReview(original: Bitmap, processed: Bitmap, savedUri: Uri?) {
         reviewOriginalBitmap?.recycle()
         reviewProcessedBitmap?.recycle()
         reviewOriginalBitmap = original
         reviewProcessedBitmap = processed
         reviewShowingOriginal = false
+        reviewSavedUri = savedUri
 
         val bg = Color.rgb(12, 13, 15)
         val panel = Color.rgb(30, 31, 34)
@@ -428,6 +432,37 @@ class MainActivity : ComponentActivity() {
         choices.addView(processedButton, LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
         root.addView(choices, LinearLayout.LayoutParams(-1, dp(54)))
 
+        lateinit var saveButton: TextView
+        saveButton = reviewButton(
+            if (reviewSavedUri != null) "已保存到相册" else "保存成片",
+            selected = reviewSavedUri == null
+        ) {
+            val current = reviewSavedUri
+            if (current != null) {
+                Toast.makeText(this@MainActivity, "成片已保存在 Pictures/光场相机", Toast.LENGTH_SHORT).show()
+            } else {
+                val bitmap = reviewProcessedBitmap
+                if (bitmap == null || bitmap.isRecycled) {
+                    Toast.makeText(this@MainActivity, "成片已失效，请重新拍摄", Toast.LENGTH_LONG).show()
+                } else {
+                    val saved = saveToGallery(bitmap)
+                    if (saved != null) {
+                        reviewSavedUri = saved
+                        saveButton.text = "已保存到相册"
+                        saveButton.background = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(panel); cornerRadius = dp(22).toFloat()
+                        }
+                        Toast.makeText(this@MainActivity, "保存成功：Pictures/光场相机", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(this@MainActivity, "保存失败，请检查手机存储空间后重试", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+        root.addView(saveButton, LinearLayout.LayoutParams(-1, dp(48)).apply {
+            setMargins(dp(4), dp(8), dp(4), 0)
+        })
+
         val back = reviewButton("返回相机") { closeReview() }
         root.addView(back, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(4), dp(8), dp(4), 0) })
         setContentView(root)
@@ -443,6 +478,7 @@ class MainActivity : ComponentActivity() {
         reviewOriginalBitmap = null
         reviewProcessedBitmap = null
         reviewShowingOriginal = false
+        reviewSavedUri = null
         buildUi()
         startCamera()
     }
@@ -512,8 +548,11 @@ class MainActivity : ComponentActivity() {
         }
         val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
         return try {
-            contentResolver.openOutputStream(uri)?.use { out ->
+            val stream = contentResolver.openOutputStream(uri)
+                ?: throw IllegalStateException("无法打开相册输出流")
+            stream.use { out ->
                 if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 96, out)) throw IllegalStateException("编码失败")
+                out.flush()
             }
             uri
         } catch (e: Exception) {
