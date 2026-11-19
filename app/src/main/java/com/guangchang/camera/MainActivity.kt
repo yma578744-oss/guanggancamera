@@ -168,7 +168,7 @@ class MainActivity : ComponentActivity() {
                 setTextColor(if (index == 0) accent else muted)
                 setPadding(dp(7), dp(9), dp(7), dp(9))
                 setOnClickListener {
-                    if (index != 0) Toast.makeText(this@MainActivity, "$mode模式正在规划中，当前可使用拍照模式", Toast.LENGTH_SHORT).show()
+                    if (index != 0) Toast.makeText(this@MainActivity, "${mode}模式正在规划中，当前可使用拍照模式", Toast.LENGTH_SHORT).show()
                 }
             }
             modes.addView(item, LinearLayout.LayoutParams(0, dp(42), 1f))
@@ -177,7 +177,6 @@ class MainActivity : ComponentActivity() {
         val activeLine = View(this).apply { setBackgroundColor(accent) }
         bottom.addView(activeLine, LinearLayout.LayoutParams(dp(80), dp(3)).apply {
             gravity = Gravity.CENTER
-            bottom.post { translationX = 0f }
         })
 
         status = TextView(this).apply {
