@@ -34,6 +34,7 @@ import kotlin.math.*
 class MainActivity : ComponentActivity() {
     private lateinit var previewView: PreviewView
     private lateinit var captureButton: TextView
+    private lateinit var flashButton: TextView
     private lateinit var status: TextView
     private var imageCapture: ImageCapture? = null
     private var processing = false
@@ -103,12 +104,18 @@ class MainActivity : ComponentActivity() {
             maxLines = 1
         }
         header.addView(appName, LinearLayout.LayoutParams(0, dp(44), 1f))
-        header.addView(pill(if (flashEnabled) "闪光" else "闪光灯") {
+        flashButton = pill(if (flashEnabled) "闪光开" else "闪光关") {
             flashEnabled = !flashEnabled
-            imageCapture?.flashMode = if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
-            buildUi()
-            startCamera()
-        }, LinearLayout.LayoutParams(dp(60), dp(42)).apply { setMargins(dp(2), 0, dp(2), 0) })
+            imageCapture?.flashMode = if (flashEnabled) {
+                ImageCapture.FLASH_MODE_ON
+            } else {
+                ImageCapture.FLASH_MODE_OFF
+            }
+            flashButton.text = if (flashEnabled) "闪光开" else "闪光关"
+        }
+        header.addView(flashButton, LinearLayout.LayoutParams(dp(68), dp(42)).apply {
+            setMargins(dp(2), 0, dp(2), 0)
+        })
         header.addView(pill("实况") {
             Toast.makeText(this, "实况模式暂未启用，目前使用高画质静态拍摄", Toast.LENGTH_SHORT).show()
         }, LinearLayout.LayoutParams(dp(46), dp(42)).apply { setMargins(dp(2), 0, dp(2), 0) })
