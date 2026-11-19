@@ -1,5 +1,6 @@
 package com.guangchang.camera
 
+import androidx.exifinterface.media.ExifInterface
 import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
@@ -374,8 +375,20 @@ class MainActivity : ComponentActivity() {
     }
 
     // JPEG from CameraX is normally oriented by the camera pipeline; kept isolated for future EXIF support.
-    private fun androidxExifOrientation(path: String): Int = 1
-
+  private fun androidxExifOrientation(path: String): Int {
+    val exif = ExifInterface(path)
+    return when (
+        exif.getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
+    ) {
+        ExifInterface.ORIENTATION_ROTATE_180 -> 3
+        ExifInterface.ORIENTATION_ROTATE_90 -> 6
+        ExifInterface.ORIENTATION_ROTATE_270 -> 8
+        else -> 1
+    }
+}
     private fun saveToGallery(bitmap: Bitmap): Uri? {
         val name = "GuangChang_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
         val values = ContentValues().apply {
