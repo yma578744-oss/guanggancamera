@@ -36,6 +36,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
     private var imageCapture: ImageCapture? = null
     private var processing = false
+    private var useFrontCamera = false
+    private var darkTheme = false
+    private var flashEnabled = false
+    private val ratios = listOf("4:3", "16:9", "1:1")
+    private var ratioIndex = 0
+    private var currentRoot: LinearLayout? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -55,59 +61,204 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun buildUi() {
+        val bg = if (darkTheme) Color.rgb(18, 19, 22) else Color.rgb(239, 241, 239)
+        val panel = if (darkTheme) Color.rgb(30, 31, 34) else Color.rgb(250, 250, 248)
+        val fg = if (darkTheme) Color.rgb(245, 245, 242) else Color.rgb(32, 34, 33)
+        val muted = if (darkTheme) Color.rgb(165, 168, 166) else Color.rgb(112, 116, 113)
+        val accent = Color.rgb(50, 126, 245)
+
+        fun pill(text: String, onClick: () -> Unit): TextView = TextView(this).apply {
+            this.text = text
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(fg)
+            setPadding(dp(10), dp(9), dp(10), dp(9))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(panel); cornerRadius = dp(22).toFloat()
+            }
+            setOnClickListener { onClick() }
+        }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(9, 11, 14))
+            setBackgroundColor(bg)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
         }
+        currentRoot = root
+
+        // Clean rounded header: app name on the left, camera controls and theme on the right.
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(22), dp(15), dp(22), dp(12))
+            setBackground(roundDrawable(panel, 28))
+            setPadding(dp(10), dp(7), dp(7), dp(7))
         }
-        val titleCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        titleCol.addView(TextView(this).apply {
-            text = "光场"; textSize = 26f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
-        })
-        titleCol.addView(TextView(this).apply {
-            text = "CINEMATIC CAMERA"; textSize = 10f; letterSpacing = .18f; setTextColor(Color.rgb(174, 164, 141))
-        })
-        header.addView(titleCol, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(TextView(this).apply {
-            text = "自动后期  ·  本地处理"; textSize = 11f; setTextColor(Color.rgb(216,199,160))
-        })
-        root.addView(header)
+        val appName = TextView(this).apply {
+            text = "光感相机"
+            textSize = 17f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            setTextColor(fg)
+            maxLines = 1
+        }
+        header.addView(appName, LinearLayout.LayoutParams(0, dp(44), 1f))
+        header.addView(pill(if (flashEnabled) "闪光" else "闪光灯") {
+            flashEnabled = !flashEnabled
+            imageCapture?.flashMode = if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+            buildUi()
+            startCamera()
+        }, LinearLayout.LayoutParams(dp(60), dp(42)).apply { setMargins(dp(2), 0, dp(2), 0) })
+        header.addView(pill("实况") {
+            Toast.makeText(this, "实况模式暂未启用，目前使用高画质静态拍摄", Toast.LENGTH_SHORT).show()
+        }, LinearLayout.LayoutParams(dp(46), dp(42)).apply { setMargins(dp(2), 0, dp(2), 0) })
+        header.addView(pill(ratios[ratioIndex]) {
+            ratioIndex = (ratioIndex + 1) % ratios.size
+            buildUi()
+            startCamera()
+        }, LinearLayout.LayoutParams(dp(54), dp(42)).apply { setMargins(dp(2), 0, dp(2), 0) })
+        header.addView(pill(if (darkTheme) "☀" else "☾") {
+            darkTheme = !darkTheme
+            buildUi()
+            startCamera()
+        }, LinearLayout.LayoutParams(dp(40), dp(42)).apply { setMargins(dp(2), 0, 0, 0) })
+        root.addView(header, LinearLayout.LayoutParams(-1, dp(58)))
 
         previewView = PreviewView(this).apply {
             scaleType = PreviewView.ScaleType.FILL_CENTER
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            setBackgroundColor(Color.BLACK)
         }
-        root.addView(previewView, LinearLayout.LayoutParams(-1, 0, 1f))
+        val previewFrame = FrameLayout(this).apply {
+            background = roundDrawable(Color.BLACK, 24)
+            clipToOutline = true
+            addView(previewView, FrameLayout.LayoutParams(-1, -1))
+            val tag = TextView(this@MainActivity).apply {
+                text = "自然光影"
+                textSize = 11f
+                setTextColor(Color.WHITE)
+                setPadding(dp(11), dp(7), dp(11), dp(7))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0x55000000); cornerRadius = dp(16).toFloat()
+                }
+            }
+            addView(tag, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+                setMargins(dp(12), dp(12), 0, 0)
+            })
+        }
+        root.addView(previewFrame, LinearLayout.LayoutParams(-1, 0, 1f).apply {
+            setMargins(dp(18), dp(16), dp(18), dp(12))
+        })
 
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(20), dp(14), dp(20), dp(24))
+            setBackground(roundDrawable(panel, 30))
+            setPadding(dp(12), dp(10), dp(12), dp(14))
         }
+        val modes = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val modeNames = listOf("拍照", "视频", "人像", "夜景", "扫描")
+        modeNames.forEachIndexed { index, mode ->
+            val item = TextView(this).apply {
+                text = mode
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setTextColor(if (index == 0) accent else muted)
+                setPadding(dp(7), dp(9), dp(7), dp(9))
+                setOnClickListener {
+                    if (index != 0) Toast.makeText(this@MainActivity, "$mode模式正在规划中，当前可使用拍照模式", Toast.LENGTH_SHORT).show()
+                }
+            }
+            modes.addView(item, LinearLayout.LayoutParams(0, dp(42), 1f))
+        }
+        bottom.addView(modes, LinearLayout.LayoutParams(-1, dp(42)))
+        val activeLine = View(this).apply { setBackgroundColor(accent) }
+        bottom.addView(activeLine, LinearLayout.LayoutParams(dp(80), dp(3)).apply {
+            gravity = Gravity.CENTER
+            bottom.post { translationX = 0f }
+        })
+
         status = TextView(this).apply {
-            text = "拍摄后自动塑造光影"; textSize = 12f; gravity = Gravity.CENTER
-            setTextColor(Color.rgb(190,190,185))
+            text = "拍摄后自动塑造光影"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
         }
-        bottom.addView(status, LinearLayout.LayoutParams(-1, dp(28)))
-        captureButton = TextView(this).apply {
-            text = "拍 摄"; textSize = 16f; gravity = Gravity.CENTER
-            setTextColor(Color.rgb(15,16,17)); typeface = Typeface.DEFAULT_BOLD
-            setBackgroundColor(Color.rgb(216,199,160))
-            setPadding(dp(24), dp(15), dp(24), dp(15))
+        bottom.addView(status, LinearLayout.LayoutParams(-1, dp(27)))
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(3), dp(8), dp(2))
+        }
+        val galleryButton = TextView(this).apply {
+            text = "▧"
+            textSize = 28f
+            gravity = Gravity.CENTER
+            setTextColor(fg)
+            background = roundDrawable(if (darkTheme) Color.rgb(45, 46, 49) else Color.WHITE, 18)
+            setOnClickListener {
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try { startActivity(intent) } catch (_: Exception) {
+                    Toast.makeText(this@MainActivity, "暂时无法打开相册", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        controls.addView(galleryButton, LinearLayout.LayoutParams(dp(60), dp(60)))
+
+        val shutter = TextView(this).apply {
+            text = ""
+            gravity = Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(if (darkTheme) Color.WHITE else Color.WHITE)
+                setStroke(dp(5), if (darkTheme) Color.rgb(75, 77, 80) else Color.rgb(225, 228, 226))
+            }
             setOnClickListener { takePhoto() }
         }
-        val captureWrap = FrameLayout(this).apply { addView(captureButton, FrameLayout.LayoutParams(dp(180), dp(54), Gravity.CENTER)) }
-        bottom.addView(captureWrap, LinearLayout.LayoutParams(-1, dp(64)))
-        bottom.addView(TextView(this).apply {
-            text = "保留原始结构 · 不使用生成式重绘"; textSize = 10f; gravity = Gravity.CENTER
-            setTextColor(Color.rgb(115,119,121))
+        captureButton = shutter
+        controls.addView(shutter, LinearLayout.LayoutParams(dp(82), dp(82)).apply {
+            gravity = Gravity.CENTER
+            weight = 1f
+            setMargins(dp(20), dp(3), dp(20), dp(3))
         })
-        root.addView(bottom)
+        val switchButton = TextView(this).apply {
+            text = "⟳"
+            textSize = 34f
+            gravity = Gravity.CENTER
+            setTextColor(fg)
+            background = roundDrawable(if (darkTheme) Color.rgb(45, 46, 49) else Color.WHITE, 50)
+            setOnClickListener {
+                useFrontCamera = !useFrontCamera
+                startCamera()
+            }
+        }
+        controls.addView(switchButton, LinearLayout.LayoutParams(dp(60), dp(60)))
+        bottom.addView(controls, LinearLayout.LayoutParams(-1, dp(92)))
+        bottom.addView(TextView(this).apply {
+            text = "保留真实细节 · 本地光影处理"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
+        }, LinearLayout.LayoutParams(-1, dp(22)))
+        root.addView(bottom, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
+        if (Build.VERSION.SDK_INT >= 23) {
+            window.decorView.systemUiVisibility = if (darkTheme) 0 else
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
+    }
+
+    private fun roundDrawable(color: Int, radiusDp: Int) = android.graphics.drawable.GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radiusDp).toFloat()
     }
 
     private fun startCamera() {
@@ -128,13 +279,14 @@ class MainActivity : ComponentActivity() {
                 )
                 .build()
             imageCapture = ImageCapture.Builder()
+                .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .setJpegQuality(100)
                 .setResolutionSelector(resolutionSelector)
                 .build()
             try {
                 provider.unbindAll()
-                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
+                provider.bindToLifecycle(this, if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
                 status.text = "已就绪 · 拍摄后自动处理"
             } catch (e: Exception) {
                 status.text = "相机启动失败：${e.localizedMessage ?: "未知错误"}"
@@ -159,7 +311,8 @@ class MainActivity : ComponentActivity() {
                         val source = BitmapFactory.decodeFile(file.absolutePath)
                             ?: throw IllegalStateException("无法读取照片")
                         val oriented = orientBitmap(source, file.absolutePath)
-                        val processed = CinematicProcessor.process(oriented)
+                        val cropped = cropToSelectedRatio(oriented)
+                        val processed = CinematicProcessor.process(cropped)
                         val uri = saveToGallery(processed)
                         runOnUiThread {
                             status.text = if (uri != null) "已保存电影感成片到相册" else "处理完成，但保存失败"
@@ -167,7 +320,8 @@ class MainActivity : ComponentActivity() {
                             processing = false; captureButton.alpha = 1f
                         }
                         if (oriented !== source) source.recycle()
-                        oriented.recycle()
+                        if (cropped !== oriented) oriented.recycle()
+                        cropped.recycle()
                         processed.recycle()
                     } catch (e: Exception) {
                         runOnUiThread {
@@ -182,6 +336,29 @@ class MainActivity : ComponentActivity() {
                 status.text = "拍摄失败"; processing = false; captureButton.alpha = 1f
             }
         })
+    }
+
+
+    private fun cropToSelectedRatio(bitmap: Bitmap): Bitmap {
+        val target = when (ratios[ratioIndex]) {
+            "16:9" -> 16.0 / 9.0
+            "1:1" -> 1.0
+            else -> 4.0 / 3.0
+        }
+        val current = bitmap.width.toDouble() / bitmap.height.toDouble()
+        if (abs(current - target) < 0.015) return bitmap
+        val cropW: Int
+        val cropH: Int
+        if (current > target) {
+            cropH = bitmap.height
+            cropW = (cropH * target).roundToInt().coerceIn(1, bitmap.width)
+        } else {
+            cropW = bitmap.width
+            cropH = (cropW / target).roundToInt().coerceIn(1, bitmap.height)
+        }
+        val left = (bitmap.width - cropW) / 2
+        val top = (bitmap.height - cropH) / 2
+        return Bitmap.createBitmap(bitmap, left, top, cropW, cropH)
     }
 
     private fun orientBitmap(bitmap: Bitmap, path: String): Bitmap {
