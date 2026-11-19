@@ -44,6 +44,9 @@ class MainActivity : ComponentActivity() {
     private val ratios = listOf("4:3", "16:9", "1:1")
     private var ratioIndex = 0
     private var currentRoot: LinearLayout? = null
+    private var reviewOriginalBitmap: Bitmap? = null
+    private var reviewProcessedBitmap: Bitmap? = null
+    private var reviewShowingOriginal = false
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -319,17 +322,20 @@ class MainActivity : ComponentActivity() {
                             ?: throw IllegalStateException("无法读取照片")
                         val oriented = orientBitmap(source, file.absolutePath)
                         val cropped = cropToSelectedRatio(oriented)
-                        val processed = CinematicProcessor.process(cropped)
-                        val uri = saveToGallery(processed)
-                        runOnUiThread {
-                            status.text = if (uri != null) "已保存电影感成片到相册" else "处理完成，但保存失败"
-                            if (uri != null) Toast.makeText(this@MainActivity, "成片已保存至相册", Toast.LENGTH_LONG).show()
-                            processing = false; captureButton.alpha = 1f
-                        }
+                        // Keep an independent copy of the unprocessed photo for A/B comparison.
+                        val originalForReview = cropped.copy(Bitmap.Config.ARGB_8888, false)
+                        // Release redundant decode/orientation buffers before allocating the processed bitmap.
                         if (oriented !== source) source.recycle()
                         if (cropped !== oriented) oriented.recycle()
+                        val processed = CinematicProcessor.process(cropped)
+                        val uri = saveToGallery(processed)
                         cropped.recycle()
-                        processed.recycle()
+                        runOnUiThread {
+                            processing = false
+                            captureButton.alpha = 1f
+                            showReview(originalForReview, processed)
+                            if (uri != null) Toast.makeText(this@MainActivity, "电影感成片已保存到相册", Toast.LENGTH_LONG).show()
+                        }
                     } catch (e: Exception) {
                         runOnUiThread {
                             status.text = "处理失败，原图未被修改"
@@ -345,6 +351,107 @@ class MainActivity : ComponentActivity() {
         })
     }
 
+
+    private fun showReview(original: Bitmap, processed: Bitmap) {
+        reviewOriginalBitmap?.recycle()
+        reviewProcessedBitmap?.recycle()
+        reviewOriginalBitmap = original
+        reviewProcessedBitmap = processed
+        reviewShowingOriginal = false
+
+        val bg = Color.rgb(12, 13, 15)
+        val panel = Color.rgb(30, 31, 34)
+        val fg = Color.rgb(245, 245, 242)
+        val muted = Color.rgb(165, 168, 166)
+        val accent = Color.rgb(91, 151, 255)
+
+        fun reviewButton(label: String, selected: Boolean = false, onClick: () -> Unit): TextView = TextView(this).apply {
+            text = label
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(if (selected) Color.WHITE else fg)
+            setPadding(dp(12), dp(11), dp(12), dp(11))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(if (selected) accent else panel)
+                cornerRadius = dp(22).toFloat()
+            }
+            setOnClickListener { onClick() }
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+            setPadding(dp(12), dp(8), dp(12), dp(12))
+        }
+        val heading = TextView(this).apply {
+            text = "电影感成片"
+            textSize = 18f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(fg)
+        }
+        root.addView(heading, LinearLayout.LayoutParams(-1, dp(48)))
+
+        val image = ImageView(this).apply {
+            setBackgroundColor(Color.BLACK)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setImageBitmap(processed)
+            contentDescription = "拍摄照片对比预览"
+        }
+        root.addView(image, LinearLayout.LayoutParams(-1, 0, 1f).apply {
+            setMargins(0, dp(8), 0, dp(12))
+        })
+
+        val label = TextView(this).apply {
+            text = "光感效果 · 已自动处理"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
+        }
+        root.addView(label, LinearLayout.LayoutParams(-1, dp(28)))
+
+        val choices = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val originalButton = reviewButton("查看原图") {
+            reviewShowingOriginal = true
+            image.setImageBitmap(reviewOriginalBitmap)
+            label.text = "原图 · 未经过光影处理"
+        }
+        val processedButton = reviewButton("光感效果", selected = true) {
+            reviewShowingOriginal = false
+            image.setImageBitmap(reviewProcessedBitmap)
+            label.text = "光感效果 · 电影感明暗"
+        }
+        choices.addView(originalButton, LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
+        choices.addView(processedButton, LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
+        root.addView(choices, LinearLayout.LayoutParams(-1, dp(54)))
+
+        val back = reviewButton("返回相机") { closeReview() }
+        root.addView(back, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(4), dp(8), dp(4), 0) })
+        setContentView(root)
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
+        if (Build.VERSION.SDK_INT >= 23) window.decorView.systemUiVisibility = 0
+
+    }
+
+    private fun closeReview() {
+        reviewOriginalBitmap?.recycle()
+        reviewProcessedBitmap?.recycle()
+        reviewOriginalBitmap = null
+        reviewProcessedBitmap = null
+        reviewShowingOriginal = false
+        buildUi()
+        startCamera()
+    }
+
+    @Deprecated("Deprecated in Android API; retained to support returning from the review screen")
+    override fun onBackPressed() {
+        if (reviewOriginalBitmap != null || reviewProcessedBitmap != null) closeReview()
+        else super.onBackPressed()
+    }
 
     private fun cropToSelectedRatio(bitmap: Bitmap): Bitmap {
         val target = when (ratios[ratioIndex]) {
@@ -475,14 +582,19 @@ private object CinematicProcessor {
                     val range = (abs(dx) + abs(dy)).coerceAtLeast(0.7)
                     val axis = (position / range + 0.5).coerceIn(0.0, 1.0)
                     val broad = smoothstep(0.08, 0.92, axis)
-                    val lightGain = 0.76 + 0.42 * broad
+                    // Subtle, broad lighting variation. Avoid aggressively crushing shadows.
+                    val lightGain = 0.90 + 0.20 * broad
 
-                    // Stronger contrast with a restrained toe and shoulder.
+                    // Film-like contrast with a lifted toe and a soft highlight shoulder.
+                    // Shadow protection is based on the source luminance so color channels
+                    // remain coherent instead of independently clipping.
+                    val shadowProtection = (1.0 - smoothstep(0.025, 0.38, lum)) * 0.045
                     fun tone(v: Double): Double {
                         val exposed = (v * lightGain).coerceIn(0.0, 1.0)
-                        val contrast = ((exposed - 0.5) * 1.24 + 0.5).coerceIn(0.0, 1.0)
-                        val toe = contrast * contrast * (3.0 - 2.0 * contrast)
-                        return (0.84 * contrast + 0.16 * toe).coerceIn(0.0, 1.0)
+                        val contrast = ((exposed - 0.46) * 1.12 + 0.46).coerceIn(0.0, 1.0)
+                        val lifted = contrast + shadowProtection * (1.0 - contrast)
+                        val shoulder = if (lifted > 0.76) 0.76 + (lifted - 0.76) * 0.68 else lifted
+                        return shoulder.coerceIn(0.0, 1.0)
                     }
                     var r = tone(r0)
                     var g = tone(g0)
@@ -490,7 +602,7 @@ private object CinematicProcessor {
 
                     // Mild color-density lift; preserve hue rather than stylized color grading.
                     val newLum = 0.2126*r + 0.7152*g + 0.0722*b
-                    val sat = 1.055
+                    val sat = 1.025
                     r = (newLum + (r-newLum)*sat).coerceIn(0.0, 1.0)
                     g = (newLum + (g-newLum)*sat).coerceIn(0.0, 1.0)
                     b = (newLum + (b-newLum)*sat).coerceIn(0.0, 1.0)
