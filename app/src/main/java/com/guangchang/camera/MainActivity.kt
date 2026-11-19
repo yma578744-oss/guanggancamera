@@ -2,6 +2,7 @@ package com.guangchang.camera
 
 import android.Manifest
 import android.content.ContentValues
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.net.Uri
@@ -9,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.*
 import androidx.activity.ComponentActivity
@@ -28,7 +30,7 @@ import kotlin.math.*
 
 class MainActivity : ComponentActivity() {
     private lateinit var previewView: PreviewView
-    private lateinit var captureButton: TextView
+    private lateinit var captureButton: ShutterButton
     private lateinit var status: TextView
     private var imageCapture: ImageCapture? = null
     private var processing = false
@@ -89,15 +91,15 @@ class MainActivity : ComponentActivity() {
             setTextColor(Color.rgb(190,190,185))
         }
         bottom.addView(status, LinearLayout.LayoutParams(-1, dp(28)))
-        captureButton = TextView(this).apply {
+        captureButton = ShutterButton(this).apply {
+            contentDescription = "拍摄"
             text = "拍 摄"; textSize = 16f; gravity = Gravity.CENTER
             setTextColor(Color.rgb(15,16,17)); typeface = Typeface.DEFAULT_BOLD
-            setBackgroundColor(Color.rgb(216,199,160))
             setPadding(dp(24), dp(15), dp(24), dp(15))
             setOnClickListener { takePhoto() }
         }
-        val captureWrap = FrameLayout(this).apply { addView(captureButton, FrameLayout.LayoutParams(dp(180), dp(54), Gravity.CENTER)) }
-        bottom.addView(captureWrap, LinearLayout.LayoutParams(-1, dp(64)))
+        val captureWrap = FrameLayout(this).apply { addView(captureButton, FrameLayout.LayoutParams(dp(82), dp(82), Gravity.CENTER)) }
+        bottom.addView(captureWrap, LinearLayout.LayoutParams(-1, dp(96)))
         bottom.addView(TextView(this).apply {
             text = "保留原始结构 · 不使用生成式重绘"; textSize = 10f; gravity = Gravity.CENTER
             setTextColor(Color.rgb(115,119,121))
@@ -202,6 +204,82 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+}
+
+/** A camera shutter control drawn as concentric circles so it remains round at every size. */
+private class ShutterButton(context: Context) : TextView(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    init {
+        isClickable = true
+        isFocusable = true
+        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        val diameter = min(measuredWidth, measuredHeight)
+        setMeasuredDimension(diameter, diameter)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val handled = super.onTouchEvent(event)
+        invalidate()
+        return handled
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val size = min(width, height).toFloat()
+        val center = size / 2f
+        val outerRadius = size * 0.485f
+        val pressed = isPressed
+
+        canvas.save()
+        if (pressed) {
+            canvas.scale(0.94f, 0.94f, center, center)
+            canvas.translate(0f, size * 0.018f)
+        }
+
+        // The dark foundation and soft shadow give the button its physical depth.
+        paint.shader = null
+        paint.style = Paint.Style.FILL
+        paint.setShadowLayer(size * 0.075f, 0f, size * 0.035f, 0x99000000.toInt())
+        paint.color = Color.rgb(24, 26, 29)
+        canvas.drawCircle(center, center, outerRadius, paint)
+        paint.clearShadowLayer()
+
+        // Two separate rings preserve a crisp circular silhouette around the shutter face.
+        paint.color = Color.rgb(213, 214, 214)
+        canvas.drawCircle(center, center, outerRadius * 0.89f, paint)
+        paint.color = Color.rgb(74, 77, 80)
+        canvas.drawCircle(center, center, outerRadius * 0.76f, paint)
+        paint.color = Color.rgb(247, 247, 245)
+        canvas.drawCircle(center, center, outerRadius * 0.66f, paint)
+
+        val faceRadius = outerRadius * if (pressed) 0.50f else 0.55f
+        paint.shader = RadialGradient(
+            center - outerRadius * 0.20f,
+            center - outerRadius * 0.24f,
+            outerRadius * 1.1f,
+            intArrayOf(Color.WHITE, Color.rgb(239, 240, 238), Color.rgb(209, 211, 211)),
+            floatArrayOf(0f, 0.60f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawCircle(center, center, faceRadius, paint)
+        paint.shader = null
+
+        // A restrained rim highlight helps the button read under a dark camera preview.
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = max(1f, size * 0.018f)
+        paint.color = 0xBFFFFFFF.toInt()
+        canvas.drawArc(
+            RectF(center - outerRadius * 0.88f, center - outerRadius * 0.88f,
+                center + outerRadius * 0.88f, center + outerRadius * 0.88f),
+            205f, 112f, false, paint
+        )
+        paint.style = Paint.Style.FILL
+        canvas.restore()
+    }
 }
 
 private object CinematicProcessor {
