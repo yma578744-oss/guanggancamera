@@ -225,10 +225,42 @@ class MainActivity : ComponentActivity() {
         val shutter = TextView(this).apply {
             text = ""
             gravity = Gravity.CENTER
-            background = android.graphics.drawable.GradientDrawable().apply {
+            contentDescription = "拍照"
+            // 立体快门：外圈提供金属边缘感，内圈用纵向渐变模拟柔和高光与下沿阴影。
+            val outerRing = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                if (darkTheme) intArrayOf(
+                    Color.rgb(245, 246, 245), Color.rgb(145, 149, 147), Color.rgb(72, 75, 74)
+                ) else intArrayOf(
+                    Color.rgb(255, 255, 255), Color.rgb(204, 210, 206), Color.rgb(139, 146, 141)
+                )
+            ).apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(if (darkTheme) Color.WHITE else Color.WHITE)
-                setStroke(dp(5), if (darkTheme) Color.rgb(75, 77, 80) else Color.rgb(225, 228, 226))
+                setStroke(dp(1), if (darkTheme) Color.rgb(90, 94, 92) else Color.rgb(180, 186, 182))
+            }
+            val innerFace = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                if (darkTheme) intArrayOf(
+                    Color.rgb(255, 255, 255), Color.rgb(239, 241, 240), Color.rgb(211, 215, 213)
+                ) else intArrayOf(
+                    Color.rgb(255, 255, 255), Color.rgb(250, 251, 250), Color.rgb(226, 230, 227)
+                )
+            ).apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setStroke(dp(1), Color.rgb(255, 255, 255))
+            }
+            background = android.graphics.drawable.LayerDrawable(arrayOf(outerRing, innerFace)).apply {
+                setLayerInset(1, dp(6), dp(6), dp(6), dp(7))
+            }
+            elevation = dp(8).toFloat()
+            val shutterView = this
+            stateListAnimator = android.animation.StateListAnimator().apply {
+                val pressed = android.animation.ObjectAnimator.ofFloat(shutterView, "translationZ", dp(1).toFloat())
+                pressed.duration = 90
+                val released = android.animation.ObjectAnimator.ofFloat(shutterView, "translationZ", dp(0).toFloat())
+                released.duration = 120
+                addState(intArrayOf(android.R.attr.state_pressed), pressed)
+                addState(intArrayOf(), released)
             }
             setOnClickListener { takePhoto() }
         }
@@ -322,7 +354,8 @@ class MainActivity : ComponentActivity() {
                         val source = BitmapFactory.decodeFile(file.absolutePath)
                             ?: throw IllegalStateException("无法读取照片")
                         val oriented = orientBitmap(source, file.absolutePath)
-                        val cropped = cropToSelectedRatio(oriented)
+                        // Preserve the complete camera frame; do not crop landscape photos to the UI ratio.
+                        val cropped = oriented
                         // Keep an independent copy of the unprocessed photo for A/B comparison.
                         val originalForReview = cropped.copy(Bitmap.Config.ARGB_8888, false)
                         // Release redundant decode/orientation buffers before allocating the processed bitmap.
@@ -418,15 +451,30 @@ class MainActivity : ComponentActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        val originalButton = reviewButton("查看原图") {
+        lateinit var originalButton: TextView
+        lateinit var processedButton: TextView
+        fun updateChoiceStyles() {
+            fun style(button: TextView, selected: Boolean) {
+                button.setTextColor(Color.WHITE)
+                button.background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(if (selected) accent else panel)
+                    cornerRadius = dp(22).toFloat()
+                }
+            }
+            style(originalButton, reviewShowingOriginal)
+            style(processedButton, !reviewShowingOriginal)
+        }
+        originalButton = reviewButton("查看原图", selected = false) {
             reviewShowingOriginal = true
             image.setImageBitmap(reviewOriginalBitmap)
             label.text = "原图 · 未经过光影处理"
+            updateChoiceStyles()
         }
-        val processedButton = reviewButton("光感效果", selected = true) {
+        processedButton = reviewButton("光感效果", selected = true) {
             reviewShowingOriginal = false
             image.setImageBitmap(reviewProcessedBitmap)
             label.text = "光感效果 · 电影感明暗"
+            updateChoiceStyles()
         }
         choices.addView(originalButton, LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
         choices.addView(processedButton, LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
@@ -434,8 +482,8 @@ class MainActivity : ComponentActivity() {
 
         lateinit var saveButton: TextView
         saveButton = reviewButton(
-            if (reviewSavedUri != null) "已保存到相册" else "保存成片",
-            selected = reviewSavedUri == null
+            "保存到相册",
+            selected = true
         ) {
             val current = reviewSavedUri
             if (current != null) {
@@ -448,10 +496,7 @@ class MainActivity : ComponentActivity() {
                     val saved = saveToGallery(bitmap)
                     if (saved != null) {
                         reviewSavedUri = saved
-                        saveButton.text = "已保存到相册"
-                        saveButton.background = android.graphics.drawable.GradientDrawable().apply {
-                            setColor(panel); cornerRadius = dp(22).toFloat()
-                        }
+                        saveButton.text = "保存到相册"
                         Toast.makeText(this@MainActivity, "保存成功：Pictures/光场相机", Toast.LENGTH_LONG).show()
                     } else {
                         Toast.makeText(this@MainActivity, "保存失败，请检查手机存储空间后重试", Toast.LENGTH_LONG).show()
