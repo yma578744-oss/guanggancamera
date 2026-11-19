@@ -17,9 +17,13 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import android.util.Size
 import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -111,9 +115,22 @@ class MainActivity : ComponentActivity() {
         future.addListener({
             val provider = future.get()
             val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            // Request the highest 4:3 resolution exposed by CameraX on this device.
+            // Some manufacturers reserve special 50MP/108MP modes for their own camera app;
+            // CameraX can only use resolutions the device exposes to third-party apps.
+            val resolutionSelector = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    ResolutionStrategy(
+                        Size(Int.MAX_VALUE, Int.MAX_VALUE),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER
+                    )
+                )
+                .build()
             imageCapture = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .setJpegQuality(100)
+                .setResolutionSelector(resolutionSelector)
                 .build()
             try {
                 provider.unbindAll()
